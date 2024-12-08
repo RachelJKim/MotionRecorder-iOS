@@ -1,10 +1,3 @@
-/*
-See LICENSE folder for this sample’s licensing information.
-
-Abstract:
-The sample app's main view controller.
-*/
-
 import UIKit
 import RealityKit
 import ARKit
@@ -14,28 +7,38 @@ class ViewController: UIViewController, ARSessionDelegate {
 
     @IBOutlet var arView: ARView!
     
-    // The 3D character to display.
+    // UI elements for recording
+    var recordButton: UIButton!
+    var stopButton: UIButton!
+    var saveButton: UIButton!
+    var fileNameTextField: UITextField!
+    
+    // Body Tracking Data
+    var isRecording = false
+    var recordedFrames: [[String: (simd_float3, TimeInterval)]] = [] // Store joint data with timestamps
+    
+    // The 3D character to display
     var character: BodyTrackedEntity?
-    let characterOffset: SIMD3<Float> = [-1.0, 0, 0] // Offset the character by one meter to the left
     let characterAnchor = AnchorEntity()
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        setupUI()
+    }
     
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         arView.session.delegate = self
         
-        // If the iOS device doesn't support body tracking, raise a developer error for
-        // this unhandled case.
         guard ARBodyTrackingConfiguration.isSupported else {
             fatalError("This feature is only supported on devices with an A12 chip")
         }
 
-        // Run a body tracking configration.
         let configuration = ARBodyTrackingConfiguration()
         arView.session.run(configuration)
         
         arView.scene.addAnchor(characterAnchor)
         
-        // Asynchronously load the 3D character.
         var cancellable: AnyCancellable? = nil
         cancellable = Entity.loadBodyTrackedAsync(named: "character/robot").sink(
             receiveCompletion: { completion in
@@ -45,7 +48,6 @@ class ViewController: UIViewController, ARSessionDelegate {
                 cancellable?.cancel()
         }, receiveValue: { (character: Entity) in
             if let character = character as? BodyTrackedEntity {
-                // Scale the character to human size
                 character.scale = [1.0, 1.0, 1.0]
                 self.character = character
                 cancellable?.cancel()
@@ -55,22 +57,138 @@ class ViewController: UIViewController, ARSessionDelegate {
         })
     }
     
+    func setupUI() {
+        // Record Button
+        recordButton = UIButton(type: .system)
+        recordButton.setTitle("Record", for: .normal)
+        recordButton.setTitleColor(.red, for: .normal)
+        recordButton.frame = CGRect(x: 20, y: 50, width: 100, height: 50)
+        recordButton.addTarget(self, action: #selector(startRecording), for: .touchUpInside)
+        view.addSubview(recordButton)
+        
+        // Stop Button
+        stopButton = UIButton(type: .system)
+        stopButton.setTitle("Stop", for: .normal)
+        stopButton.setTitleColor(.red, for: .normal)
+        stopButton.frame = CGRect(x: 140, y: 50, width: 100, height: 50)
+        stopButton.addTarget(self, action: #selector(stopRecording), for: .touchUpInside)
+        stopButton.isHidden = true // Initially hide the stop button
+        view.addSubview(stopButton)
+        
+        // Save Button
+        saveButton = UIButton(type: .system)
+        saveButton.setTitle("Save", for: .normal)
+        saveButton.setTitleColor(.red, for: .normal)
+        saveButton.frame = CGRect(x: 260, y: 50, width: 100, height: 50)
+        saveButton.addTarget(self, action: #selector(saveRecordingWithFileName), for: .touchUpInside)
+        saveButton.isHidden = true
+        view.addSubview(saveButton)
+        
+        // File Name Text Field
+        fileNameTextField = UITextField(frame: CGRect(x: 20, y: 110, width: 240, height: 40))
+        fileNameTextField.borderStyle = .roundedRect
+        fileNameTextField.placeholder = "Enter file name"
+        fileNameTextField.isHidden = true
+        view.addSubview(fileNameTextField)
+    }
+    
+    @objc func startRecording() {
+        isRecording = true
+        recordedFrames = [] // Clear previous recordings
+        print("Recording started")
+        
+        // Show the Stop button and hide the Record button
+        recordButton.isHidden = true
+        stopButton.isHidden = false
+    }
+    
+    @objc func stopRecording() {
+        isRecording = false
+        print("Recording stopped")
+        
+        // Show the Save button and text field
+        stopButton.isHidden = true
+        fileNameTextField.isHidden = false
+        saveButton.isHidden = false
+    }
+    
+    @objc func saveRecordingWithFileName() {
+        guard let fileName = fileNameTextField.text, !fileName.isEmpty else {
+            print("Error: File name is empty")
+            return
+        }
+        
+        saveRecording(fileName: fileName)
+        
+        // Hide the Save button and text field, show the Record button
+        fileNameTextField.isHidden = true
+        saveButton.isHidden = true
+        recordButton.isHidden = false
+    }
+    
+    func saveRecording(fileName: String) {
+        // Get the Documents directory
+        let fileManager = FileManager.default
+        guard let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            print("Error: Unable to access the Documents directory.")
+            return
+        }
+        
+        // Create the BodyTrackingData folder
+        let folderURL = documentsURL.appendingPathComponent("BodyTrackingData")
+        do {
+            if !fileManager.fileExists(atPath: folderURL.path) {
+                try fileManager.createDirectory(at: folderURL, withIntermediateDirectories: true, attributes: nil)
+                print("Created folder at: \(folderURL.path)")
+            }
+        } catch {
+            print("Error creating folder: \(error.localizedDescription)")
+            return
+        }
+        
+        // Create the CSV file path
+        let fileURL = folderURL.appendingPathComponent("\(fileName).csv")
+        
+        // Generate the CSV data
+        var csvString = "Frame,JointName,Timestamp,X,Y,Z\n" // CSV Header
+        for (frameIndex, frameData) in recordedFrames.enumerated() {
+            for (jointName, (position, timestamp)) in frameData {
+                csvString += "\(frameIndex),\(jointName),\(timestamp),\(position.x),\(position.y),\(position.z)\n"
+            }
+        }
+        
+        // Write the CSV data to the file
+        do {
+            try csvString.write(to: fileURL, atomically: true, encoding: .utf8)
+            print("Data saved successfully to: \(fileURL.path)")
+        } catch {
+            print("Error saving CSV file: \(error.localizedDescription)")
+        }
+    }
+
     func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
         for anchor in anchors {
             guard let bodyAnchor = anchor as? ARBodyAnchor else { continue }
             
-            // Update the position of the character anchor's position.
             let bodyPosition = simd_make_float3(bodyAnchor.transform.columns.3)
-            characterAnchor.position = bodyPosition + characterOffset
-            // Also copy over the rotation of the body anchor, because the skeleton's pose
-            // in the world is relative to the body anchor's rotation.
+            characterAnchor.position = bodyPosition
             characterAnchor.orientation = Transform(matrix: bodyAnchor.transform).rotation
-   
+            
             if let character = character, character.parent == nil {
-                // Attach the character to its anchor as soon as
-                // 1. the body anchor was detected and
-                // 2. the character was loaded.
                 characterAnchor.addChild(character)
+            }
+            
+            if isRecording {
+                // Record joint data along with timestamp
+                let timestamp = Date().timeIntervalSince1970 // Current time in seconds
+                var frameData: [String: (simd_float3, TimeInterval)] = [:]
+                
+                for jointName in ARSkeletonDefinition.defaultBody3D.jointNames {
+                    if let jointTransform = bodyAnchor.skeleton.modelTransform(for: ARSkeleton.JointName(rawValue: jointName)) {
+                        frameData[jointName] = (simd_make_float3(jointTransform.columns.3), timestamp)
+                    }
+                }
+                recordedFrames.append(frameData)
             }
         }
     }
