@@ -15,7 +15,7 @@ class ViewController: UIViewController, ARSessionDelegate {
     
     // Body Tracking Data
     var isRecording = false
-    var recordedFrames: [[String: (simd_float3, TimeInterval)]] = [] // Store joint data with timestamps
+    var recordedFrames: [[String: (simd_float3, simd_quatf, TimeInterval)]] = [] // Store joint data with position, rotation, and timestamp
     
     // The 3D character to display
     var character: BodyTrackedEntity?
@@ -150,10 +150,10 @@ class ViewController: UIViewController, ARSessionDelegate {
         let fileURL = folderURL.appendingPathComponent("\(fileName).csv")
         
         // Generate the CSV data
-        var csvString = "Frame,JointName,Timestamp,X,Y,Z\n" // CSV Header
+        var csvString = "Frame,JointName,Timestamp,PositionX,PositionY,PositionZ,RotationX,RotationY,RotationZ,RotationW\n" // CSV Header
         for (frameIndex, frameData) in recordedFrames.enumerated() {
-            for (jointName, (position, timestamp)) in frameData {
-                csvString += "\(frameIndex),\(jointName),\(timestamp),\(position.x),\(position.y),\(position.z)\n"
+            for (jointName, (position, rotation, timestamp)) in frameData {
+                csvString += "\(frameIndex),\(jointName),\(timestamp),\(position.x),\(position.y),\(position.z),\(rotation.vector.x),\(rotation.vector.y),\(rotation.vector.z),\(rotation.vector.w)\n"
             }
         }
         
@@ -179,13 +179,15 @@ class ViewController: UIViewController, ARSessionDelegate {
             }
             
             if isRecording {
-                // Record joint data along with timestamp
+                // Record joint data along with timestamp and rotation
                 let timestamp = Date().timeIntervalSince1970 // Current time in seconds
-                var frameData: [String: (simd_float3, TimeInterval)] = [:]
+                var frameData: [String: (simd_float3, simd_quatf, TimeInterval)] = [:]
                 
                 for jointName in ARSkeletonDefinition.defaultBody3D.jointNames {
                     if let jointTransform = bodyAnchor.skeleton.modelTransform(for: ARSkeleton.JointName(rawValue: jointName)) {
-                        frameData[jointName] = (simd_make_float3(jointTransform.columns.3), timestamp)
+                        let position = simd_make_float3(jointTransform.columns.3)
+                        let rotation = simd_quatf(jointTransform)
+                        frameData[jointName] = (position, rotation, timestamp)
                     }
                 }
                 recordedFrames.append(frameData)
